@@ -1,0 +1,73 @@
+; deps
+(set! lpeg (require :lpeg))
+(destr {P V S R C Cc Ct} lpeg)
+
+; predefine some common patterns
+(set! White (S (^ " \t\r\n," 0))
+(set! Comment
+	(*
+		";"
+		(^ (- 1 (S "\r\n")) 0)
+		(S "\r\n"))
+(set! White (* White (^ (* Comment White) 0)))
+(set! Alphanumeric (R "az" "AZ" "09"))
+
+; utility functions
+(defn mark [name]
+	(fn [...]
+		[name, ...]))
+
+(defn auto_variable [fn]
+	(setfenv fn (setmetatable {} {:__index (fn [name]
+		(if (.match name "^[A-Z]")
+			(V name)
+			(nil)))}))
+
+; cleanup some nodes during parsing
+(defn keyword [token] ((mark "keyword") [(get token 2)]))
+(defn float [token] ((mark "float") (tonumber token)))
+(defn integer [token] ((mark "integer") (tonumber token)))
+(defn tag [token] ((mark "tag") [(get token 2)]))
+
+; the language grammar in LPEG format
+; this is basically edn-format/EDN with quote/unquote support
+(set! parser (auto_variable (fn []
+	(P {
+		1 Code
+		
+		:Code (* (Ct (^ Value 0)) White -1)
+		:Integer (/ (* White (C (^ (R "09") 1))) integer)
+		:Float (/ (* White (C (* Integer (sym ".") Integer))) float)
+		:Nil (/ (* White (sym "nil")) (mark "nil"))
+		:Boolean (/ (* White (C (+ (sym "true") (sym "false")))) (mark "boolean"))
+
+		:Symbol (/
+			(*
+				White
+				(C (^ (+ Alphanumeric (S ".*+!-_?$%&/=<>")) 1)))
+			(mark "symbol"))
+
+		:Keyword (/ (* White (sym ":") Symbol) keyword)
+
+		:Characters (/
+			(*
+				White
+				(C (* (sym "\\") (^ Alphanumeric 1))))
+			(mark "chars"))
+
+		:String (/
+			(*
+				White
+				(sym "\"")
+				(C (^ (+ (P "\\\\") ("\\\"") (- 1 (S "\"\r\n"))) 0))
+				(sym "\""))
+			(mark "string"))
+
+		:Quote (/ (* White (+ (P "'") "`") Value) (mark "quasiquote"))
+		:Unquote (/ (* (sym "@") Value) (mark "unquote"))
+		:Tag (/ (* (sym "#") Symbol) tag)
+		:SExp (/ (* (sym "(") (Ct (^ Value 0)) (sym ")")) (mark "list"))
+		:Vector (/ (* (sym "[") (Ct (^ Value 0)) (sym "]")) (mark "vector"))
+		:Map (/ (* (sym "{") (Ct (^ Value 0)) (sym "}")) (mark "map"))
+		:Set (/ (* (sym "#") (sym "{") (Ct (^ Value 0)) (sym "}")) (mark "set"))
+	}))))
